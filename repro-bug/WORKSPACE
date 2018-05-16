@@ -1,0 +1,101 @@
+workspace(name= "repro_link_error")
+
+other_repo_path="/path/to/repro-archive/other-repo"
+
+http_archive(
+  name = "io_tweag_rules_haskell",
+  strip_prefix = "rules_haskell-e1eba61f145b5203c748fc53e77e0862e2fc2554",
+  urls = ["https://github.com/tweag/rules_haskell/archive/e1eba61f145b5203c748fc53e77e0862e2fc2554.tar.gz"]
+)
+
+load("@io_tweag_rules_haskell//haskell:repositories.bzl",
+     "haskell_repositories")
+haskell_repositories()
+
+http_archive(
+  name = "io_tweag_rules_nixpkgs",
+  strip_prefix = "rules_nixpkgs-0.2",
+  urls = ["https://github.com/tweag/rules_nixpkgs/archive/v0.2.tar.gz"],
+)
+
+load(
+  "@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl",
+  "nixpkgs_git_repository",
+  "nixpkgs_package"
+)
+
+nixpkgs_git_repository(
+  name = "nixpkgs",
+  revision = "4026ea9c8afd09b60896b861a04cc5748fdcdfb4",
+)
+
+nixpkgs_package(
+  name = "ghc-nix-packages-toolchain",
+  repository = "@nixpkgs",
+  nix_file_content = """
+let pkgs = import <nixpkgs> {};
+in pkgs.buildEnv {
+  name = "ghc-nix-packages-toolchain";
+  paths = with pkgs; [
+    (haskell.packages.ghc822.ghcWithPackages (p: with p;
+       [ base
+         cereal
+         linear
+         TypeCompose
+         vector-binary-instances
+       ]
+     ))
+  ];
+}
+""",
+
+  # For rts example. Not needed if you're using the RTS directly.
+  build_file_content = """
+package(default_visibility = ["//visibility:public"])
+filegroup(
+  name = "bin",
+  srcs = glob(["bin/*"]),
+)
+cc_library(
+  name = "threaded-rts",
+  srcs = glob(["lib/ghc-8.2.2/rts/libHSrts_thr-ghc*.so"]),
+  hdrs = glob(["lib/ghc-8.2.2/include/**/*.h"]),
+  strip_include_prefix = "lib/ghc-8.2.2/include",
+)
+  """,
+)
+register_toolchains("//:ghc-nix-packages-toolchain")
+
+new_local_repository(
+    name="other_repo",
+    path=other_repoo_path,
+    build_file_content = """
+package(default_visibility = ["//visibility:public"])
+load(
+    "@io_tweag_rules_haskell//haskell:haskell.bzl",
+    "haskell_library",
+    "haskell_toolchain",
+    "haskell_cc_import",
+)
+
+cc_library(
+  name="clib",
+  srcs=["clib.cpp"],
+  hdrs=["clib.h"],
+)
+
+haskell_toolchain(
+    name = "ghc-nix-packages-toolchain",
+    version = "8.2.2",
+    tools = "@ghc-nix-packages-toolchain//:bin",
+)
+
+haskell_library(
+    name = "hslib",
+    srcs = ["HSLib.hs"],
+    visibility = ["//visibility:public"],
+    prebuilt_dependencies = ["base", "template-haskell"],
+    deps = [":clib"],
+)
+"""
+)
